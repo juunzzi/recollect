@@ -65,12 +65,13 @@ export async function main(argv) {
 
   switch (command) {
     case "init": {
-      const vault = flags.vault || cfg.vaultPath;
-      if (!vault) throw new Error("usage: recollect init --vault <path> [--remote <git-url>]");
+      // zero-argument init must just work: default to ~/recollect-vault
+      const vault = flags.vault || cfg.vaultPath || "~/recollect-vault";
       const vaultPath = path.resolve(String(vault).replace(/^~(?=$|\/)/, process.env.HOME || ""));
+      const remote = flags.remote ? String(flags.remote) : "";
       if (!fs.existsSync(vaultPath)) {
-        if (flags.remote) {
-          execFileSync("git", ["clone", String(flags.remote), vaultPath], { stdio: "inherit" });
+        if (remote) {
+          execFileSync("git", ["clone", remote, vaultPath], { stdio: "inherit" });
         } else {
           fs.mkdirSync(vaultPath, { recursive: true });
         }
@@ -79,11 +80,30 @@ export async function main(argv) {
       if (!fs.existsSync(path.join(vaultPath, ".git"))) {
         execFileSync("git", ["init"], { cwd: vaultPath, stdio: "ignore" });
       }
-      saveConfig({ vaultPath, ...(flags.remote ? { remote: String(flags.remote) } : {}) });
+      if (remote) {
+        // attach the remote to an existing local vault too (re-running init is safe)
+        const remotes = execFileSync("git", ["remote"], { cwd: vaultPath, encoding: "utf8" });
+        if (!remotes.split("\n").includes("origin")) {
+          execFileSync("git", ["remote", "add", "origin", remote], { cwd: vaultPath, stdio: "ignore" });
+        }
+      }
+      saveConfig({ vaultPath, ...(remote ? { remote } : {}) });
       touchMarker(vaultPath);
       syncVault(vaultPath, "recollect: init vault");
-      console.log(`vault ready at ${vaultPath}`);
-      console.log(`\nnext steps:`);
+      if (remote) {
+        try {
+          execFileSync("git", ["push", "-u", "origin", "HEAD"], { cwd: vaultPath, stdio: "ignore", timeout: 60_000 });
+        } catch {
+          console.log("note: could not push to the remote yet — check access, then run `recollect sync`");
+        }
+      }
+      console.log(`vault ready at ${vaultPath}${remote ? ` (remote: ${remote})` : " (local only)"}`);
+      if (!remote) {
+        console.log(`\ntip: back your memories with a PRIVATE repo so they sync across machines:`);
+        console.log(`  gh repo create <you>/recollect-vault --private`);
+        console.log(`  recollect init --remote git@github.com:<you>/recollect-vault.git`);
+      }
+      console.log(`\nif the Claude Code plugin is not installed yet:`);
       console.log(`  claude plugin marketplace add juunzzi/recollect`);
       console.log(`  claude plugin install recollect@recollect`);
       return;

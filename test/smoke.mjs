@@ -119,5 +119,16 @@ await new Promise((r) => setTimeout(r, 300));
 assert.ok(!(await daemonAlive(cacheDir)), "daemon shuts down");
 daemon.kill("SIGKILL");
 
+// --- setup banner when no vault is configured ---
+process.env.RECOLLECT_VAULT = "";
+process.env.RECOLLECT_CONFIG_DIR = path.join(tmp, "empty-config");
+const bare = loadConfig();
+assert.equal(bare.vaultPath, "");
+const banner = await inject(bare, "session-start");
+assert.ok(banner.includes("not set up"), "session-start explains missing vault setup");
+assert.equal(await inject(bare, "prompt-submit"), "", "other events stay silent without a vault");
+const missing = { ...bare, vaultPath: path.join(tmp, "gone") };
+assert.ok((await inject(missing, "session-start")).includes("vault missing"));
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log("smoke ok");

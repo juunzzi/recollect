@@ -27,8 +27,10 @@ Requires Node >= 20 and the `claude` CLI.
 # 1. the engine (CLI + daemon + MCP server)
 npm install -g github:juunzzi/recollect
 
-# 2. create your vault (add --remote git@github.com:you/my-vault.git to sync it)
-recollect init --vault ~/recollect-vault
+# 2. your vault — a PRIVATE git repo is recommended so memories sync across machines
+gh repo create <you>/recollect-vault --private
+recollect init --remote git@github.com:<you>/recollect-vault.git
+# (or just `recollect init` for a local-only vault at ~/recollect-vault)
 
 # 3. the Claude Code plugin (hooks + MCP wiring)
 claude plugin marketplace add juunzzi/recollect
@@ -36,6 +38,13 @@ claude plugin install recollect@recollect
 ```
 
 That's it. New sessions will start accumulating memories.
+
+If you install the plugin before running `init`, nothing breaks: recollect
+injects a short setup notice into your next session telling you (and Claude)
+exactly what's missing, and stays inactive until the vault exists. Re-running
+`recollect init --remote ...` later attaches a remote to an existing vault.
+
+> Keep the vault **private** — it will accumulate details about your work.
 
 ## How it works
 
@@ -120,14 +129,6 @@ npm uninstall -g @juunzzi/recollect
 rm -rf ~/.cache/recollect ~/.recollect   # derived data + config
 # your vault is yours — keep or delete it
 ```
-
-## Credits
-
-The architecture borrows heavily from an internal team-memory system
-(git+markdown vault as source of truth, thin always-exit-0 hooks, deferred
-one-call-per-session extraction, daemon-first reads with inline fallback,
-flag-based supersede). This is an independent, single-user, from-scratch
-implementation of those ideas.
 
 ## License
 

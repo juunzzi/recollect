@@ -4,8 +4,10 @@ const CANDIDATES = 50;
 
 /**
  * Hybrid ranking. When embedding coverage is high the vector stream gates the
- * candidate set and BM25 boosts scores within it (measured upstream to beat
- * rank fusion on real vaults); with partial coverage we fall back to a union so
+ * candidate set and BM25 boosts scores within it — semantic recall decides
+ * what competes, lexical precision decides what wins, and rank-fusion noise
+ * from weak lexical-only candidates stays out. With partial coverage we fall
+ * back to a union so
  * facts without vectors can still surface. No embeddings at all → BM25 only.
  */
 export async function hybridSearch({ facts, index, embMap, embedQuery, query, k = 8 }) {

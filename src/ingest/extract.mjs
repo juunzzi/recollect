@@ -114,8 +114,9 @@ export async function extractSession(cfg, { transcript, session = "", cwd = "" }
   if (!digest || digest.length < 500) return { written: 0, skipped: true, reason: "transcript_too_small" };
 
   const existing = listFacts(cfg.vaultPath);
-  // corpus-aware context: without real ids in the prompt, `supersedes` can
-  // never resolve (measured upstream: 2% → 64% resolution after adding this)
+  // corpus-aware context: the model can only emit resolvable `supersedes`
+  // ids if the real ids are in the prompt — without this the version chain
+  // is dead weight
   const recent = existing
     .slice()
     .sort((a, b) => String(b.meta.created).localeCompare(String(a.meta.created)))

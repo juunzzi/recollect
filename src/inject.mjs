@@ -18,7 +18,7 @@ export function readHookInput(timeoutMs = 3000) {
       }
     };
     const guard = setTimeout(done, timeoutMs);
-    if (process.stdin.isTTY) {
+    if (process.stdin.isTTY || process.stdin.readableEnded) {
       clearTimeout(guard);
       resolve({});
       return;
@@ -92,14 +92,45 @@ function renderHits(hits, { full = false } = {}) {
     .join("\n");
 }
 
+/**
+ * When the engine is installed but the vault isn't usable yet, session-start
+ * injects setup guidance instead of silently doing nothing — an open-source
+ * install must explain itself. Other events stay silent.
+ */
+function setupBanner(cfg) {
+  if (!cfg.vaultPath) {
+    return (
+      "## recollect: memory vault not set up\n" +
+      "> The recollect plugin is installed but has no vault, so no memories are being " +
+      "saved or recalled. One-time setup (tell the user; do not run it unprompted):\n" +
+      ">\n" +
+      "> 1. (recommended) create a **private** repo for the vault, e.g. `gh repo create <you>/recollect-vault --private`\n" +
+      "> 2. `recollect init --remote git@github.com:<you>/recollect-vault.git` " +
+      "(or just `recollect init` for a local-only vault at `~/recollect-vault`)\n"
+    );
+  }
+  if (!fs.existsSync(cfg.vaultPath)) {
+    return (
+      "## recollect: vault missing\n" +
+      `> Configured vault \`${cfg.vaultPath}\` does not exist on this machine. ` +
+      "Tell the user to run `recollect init` (re-clones the remote if one was configured).\n"
+    );
+  }
+  return "";
+}
+
 export async function inject(cfg, event) {
   const hook = await readHookInput();
   const session = String(hook.session_id || "");
 
   if (event === "session-start") {
+    const banner = setupBanner(cfg);
+    if (banner) return banner;
     // profile is built from vault recency directly — no LLM, no daemon needed
     return sessionProfile(cfg);
   }
+
+  if (!cfg.vaultPath || !fs.existsSync(cfg.vaultPath)) return "";
 
   if (event === "prompt-submit") {
     const prompt = String(hook.prompt || "").trim();
