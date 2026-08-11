@@ -1,0 +1,13 @@
+{
+  "name": "recollect",
+  "owner": {
+    "name": "juunzzi"
+  },
+  "plugins": [
+    {
+      "name": "recollect",
+      "source": "./",
+      "description": "Personal session memory: auto-extract durable memories from sessions into a git+markdown vault, inject them back when relevant."
+    }
+  ]
+}

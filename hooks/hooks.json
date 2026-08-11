@@ -1,0 +1,52 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/session-start.mjs" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/prompt-submit.mjs" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/pre-tool-use.mjs" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/stop.mjs" }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/consolidate.mjs" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/consolidate.mjs" }
+        ]
+      }
+    ]
+  }
+}

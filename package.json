@@ -1,0 +1,38 @@
+{
+  "name": "@juunzzi/recollect",
+  "version": "0.1.0",
+  "description": "Personal session memory for Claude Code — a git+markdown vault, hybrid search (BM25 + local embeddings), and automatic end-of-session extraction. Installs as a single CLI plus a thin Claude Code plugin.",
+  "license": "MIT",
+  "author": "juunzzi",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "recollect": "bin/recollect.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "prompts",
+    "hooks",
+    ".claude-plugin",
+    ".mcp.json"
+  ],
+  "scripts": {
+    "test": "node test/smoke.mjs && node test/smoke-extract.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "gray-matter": "^4.0.3",
+    "minisearch": "^7.1.0",
+    "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/juunzzi/recollect.git"
+  }
+}

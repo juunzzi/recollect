@@ -1,0 +1,154 @@
+import fs from "node:fs";
+import path from "node:path";
+import { cacheRoot } from "./config.mjs";
+import { createContext, dispatch } from "./engine.mjs";
+import { callDaemon } from "./daemon/client.mjs";
+import { cutLowRelevance } from "./search/hybrid.mjs";
+import { listFacts } from "./vault.mjs";
+
+/** Read the hook JSON from stdin with a hard guard so a hook can never hang. */
+export function readHookInput(timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let raw = "";
+    const done = () => {
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        resolve({});
+      }
+    };
+    const guard = setTimeout(done, timeoutMs);
+    if (process.stdin.isTTY) {
+      clearTimeout(guard);
+      resolve({});
+      return;
+    }
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", (c) => (raw += c));
+    process.stdin.on("end", () => {
+      clearTimeout(guard);
+      done();
+    });
+    process.stdin.on("error", () => {
+      clearTimeout(guard);
+      done();
+    });
+  });
+}
+
+/**
+ * Daemon-first query with inline fallback. Inline skips embeddings — a cold
+ * model load would blow the hook latency budget; BM25-only is fine there.
+ */
+async function query(cfg, payload) {
+  const cacheDir = cacheRoot(cfg);
+  const viaDaemon = await callDaemon(cacheDir, payload);
+  if (viaDaemon?.ok) return viaDaemon;
+  try {
+    const ctx = createContext(cfg, { embeddings: false });
+    return await dispatch(ctx, payload);
+  } catch {
+    return null;
+  }
+}
+
+/* per-session "already injected" filter so the same memory is not repeated */
+const seenFile = (cacheDir, session) => path.join(cacheDir, "seen", `${session}.json`);
+
+function filterSeen(cfg, session, hits) {
+  if (!session) return hits;
+  const file = seenFile(cacheRoot(cfg), session);
+  let seen = [];
+  try {
+    seen = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    /* first injection this session */
+  }
+  const fresh = hits.filter((h) => !seen.includes(h.id));
+  if (fresh.length) {
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify([...seen, ...fresh.map((h) => h.id)].slice(-200)));
+    } catch {
+      /* best-effort */
+    }
+  }
+  return fresh;
+}
+
+const GUARD =
+  "> Personal memory recalled by recollect (reference only — may be stale; " +
+  "trust current code over memory; silently ignore irrelevant items).";
+
+function renderHits(hits, { full = false } = {}) {
+  return hits
+    .map((h) => {
+      const date = String(h.meta?.created || "").slice(0, 10);
+      const firstLines = full
+        ? h.body
+        : h.body.split("\n").slice(0, 3).join(" ").slice(0, 400);
+      return `- **[${h.type}]** ${h.title} _(${date}, id: \`${h.id}\`)_\n  ${firstLines}`;
+    })
+    .join("\n");
+}
+
+export async function inject(cfg, event) {
+  const hook = await readHookInput();
+  const session = String(hook.session_id || "");
+
+  if (event === "session-start") {
+    // profile is built from vault recency directly — no LLM, no daemon needed
+    return sessionProfile(cfg);
+  }
+
+  if (event === "prompt-submit") {
+    const prompt = String(hook.prompt || "").trim();
+    if (prompt.length < 8) return "";
+    const res = await query(cfg, { op: "search", query: prompt, k: cfg.injectLimit });
+    let hits = cutLowRelevance(res?.hits || []);
+    hits = filterSeen(cfg, session, hits).slice(0, cfg.injectLimit);
+    if (!hits.length) return "";
+    return `## recollect memory\n${GUARD}\n\n${renderHits(hits)}\n`;
+  }
+
+  if (event === "pre-tool-use") {
+    const file = hook.tool_input?.file_path || hook.tool_input?.notebook_path || "";
+    if (!file) return "";
+    const res = await query(cfg, { op: "related", file, k: 3 });
+    let hits = res?.hits || [];
+    hits = filterSeen(cfg, session, hits);
+    if (!hits.length) return "";
+    const context = `## recollect memory for this file\n${GUARD}\n\n${renderHits(hits, { full: true })}\n`;
+    return JSON.stringify({
+      hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: context },
+    });
+  }
+
+  return "";
+}
+
+/** Session-start profile: counts + most recent memories, feedback pinned. */
+function sessionProfile(cfg) {
+  const facts = listFacts(cfg.vaultPath);
+  if (!facts.length) return "";
+  const byCreated = (a, b) => String(b.meta.created).localeCompare(String(a.meta.created));
+  const feedback = facts.filter((f) => f.type === "feedback").sort(byCreated).slice(0, 5);
+  const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recent = facts
+    .filter((f) => f.type !== "feedback" && new Date(f.meta.created).getTime() > cutoff)
+    .sort(byCreated)
+    .slice(0, 8);
+  if (!feedback.length && !recent.length) return "";
+  const section = (title, items) =>
+    items.length
+      ? `\n### ${title}\n${items
+          .map((f) => `- [${f.type}] ${f.title} _(id: \`${f.id}\`)_`)
+          .join("\n")}`
+      : "";
+  return (
+    `## recollect memory profile\n${GUARD}\n` +
+    section("Standing rules", feedback) +
+    section("Recent (7 days)", recent) +
+    `\n\n> Full text via MCP \`get\` (id above) or \`search\`.\n`
+  );
+}

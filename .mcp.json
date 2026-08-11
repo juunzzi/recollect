@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "recollect": {
+      "command": "recollect",
+      "args": ["mcp"]
+    }
+  }
+}

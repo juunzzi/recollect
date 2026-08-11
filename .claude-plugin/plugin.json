@@ -1,0 +1,8 @@
+{
+  "name": "recollect",
+  "description": "Personal session memory for Claude Code. Thin hooks delegate to the recollect engine (install: npm i -g github:juunzzi/recollect): sessions are auto-distilled into a git+markdown vault, and relevant memories are injected back on session start, prompt submit, and file access. MCP tools: search/get/related_to_file/remember.",
+  "version": "0.1.0",
+  "author": {
+    "name": "juunzzi"
+  }
+}

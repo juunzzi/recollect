@@ -1,0 +1,272 @@
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { loadConfig, saveConfig, requireVault, cacheRoot, disabled } from "./config.mjs";
+import { listFacts, writeFact, getFact, touchMarker } from "./vault.mjs";
+import { createContext, dispatch } from "./engine.mjs";
+import { callDaemon, daemonAlive, ensureDaemon } from "./daemon/client.mjs";
+import { runDaemon, readDaemonInfo } from "./daemon/server.mjs";
+import { inject } from "./inject.mjs";
+import { markPending, clearPending, duePending } from "./ingest/pending.mjs";
+import { extractSession } from "./ingest/extract.mjs";
+import { syncVault } from "./gitsync.mjs";
+import { getEmbedder, loadEmbeddings, saveEmbedding, pruneEmbeddings } from "./search/embeddings.mjs";
+
+function parseArgs(argv) {
+  const flags = {};
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--")) {
+        flags[key] = next;
+        i++;
+      } else {
+        flags[key] = true;
+      }
+    } else {
+      positional.push(a);
+    }
+  }
+  return { flags, positional };
+}
+
+async function queryEngine(cfg, payload) {
+  const viaDaemon = await callDaemon(cacheRoot(cfg), payload);
+  if (viaDaemon?.ok) return viaDaemon;
+  const ctx = createContext(cfg);
+  return dispatch(ctx, payload);
+}
+
+const HELP = `recollect — personal session memory for Claude Code
+
+  init --vault <path> [--remote <git-url>]   set up the vault (clones remote if given)
+  search <query> [--k N] [--json]            hybrid search over memories
+  get <id>                                   print one memory
+  related --file <path> [--json]             memories tied to a file
+  remember <text> [--type t] [--title s]     save a memory manually (no LLM)
+  ingest --transcript <p> [--session s] [--cwd d]  extract memories from a transcript
+  ingest --catchup                           extract from sessions that ended quietly
+  inject --event <e>                         (hook entry) print context for an event
+  server <run|ensure|stop|status>            manage the warm search daemon
+  mcp                                        run the MCP stdio server
+  reindex                                    backfill/prune local embeddings
+  sync                                       git commit/pull/push the vault
+  status                                     show vault + daemon status
+
+Env: RECOLLECT_VAULT, RECOLLECT_DISABLE=1, RECOLLECT_NO_EMBED=1, RECOLLECT_EXTRACTOR(_MODEL)`;
+
+export async function main(argv) {
+  const [command, ...rest] = argv;
+  const { flags, positional } = parseArgs(rest);
+  const cfg = loadConfig();
+
+  switch (command) {
+    case "init": {
+      const vault = flags.vault || cfg.vaultPath;
+      if (!vault) throw new Error("usage: recollect init --vault <path> [--remote <git-url>]");
+      const vaultPath = path.resolve(String(vault).replace(/^~(?=$|\/)/, process.env.HOME || ""));
+      if (!fs.existsSync(vaultPath)) {
+        if (flags.remote) {
+          execFileSync("git", ["clone", String(flags.remote), vaultPath], { stdio: "inherit" });
+        } else {
+          fs.mkdirSync(vaultPath, { recursive: true });
+        }
+      }
+      fs.mkdirSync(path.join(vaultPath, "facts"), { recursive: true });
+      if (!fs.existsSync(path.join(vaultPath, ".git"))) {
+        execFileSync("git", ["init"], { cwd: vaultPath, stdio: "ignore" });
+      }
+      saveConfig({ vaultPath, ...(flags.remote ? { remote: String(flags.remote) } : {}) });
+      touchMarker(vaultPath);
+      syncVault(vaultPath, "recollect: init vault");
+      console.log(`vault ready at ${vaultPath}`);
+      console.log(`\nnext steps:`);
+      console.log(`  claude plugin marketplace add juunzzi/recollect`);
+      console.log(`  claude plugin install recollect@recollect`);
+      return;
+    }
+
+    case "search": {
+      requireVault(cfg);
+      const q = positional.join(" ");
+      if (!q) throw new Error("usage: recollect search <query>");
+      const res = await queryEngine(cfg, { op: "search", query: q, k: Number(flags.k || 8) });
+      if (flags.json) {
+        console.log(JSON.stringify(res.hits, null, 2));
+        return;
+      }
+      for (const h of res.hits || []) {
+        console.log(`${h.score.toFixed(3)} [${h.type}] ${h.title}  (${h.id})`);
+      }
+      return;
+    }
+
+    case "get": {
+      requireVault(cfg);
+      const id = positional[0];
+      if (!id) throw new Error("usage: recollect get <id>");
+      const fact = getFact(cfg.vaultPath, id);
+      if (!fact) throw new Error(`not found: ${id}`);
+      console.log(`# [${fact.type}] ${fact.title}\n\n${fact.body}`);
+      return;
+    }
+
+    case "related": {
+      requireVault(cfg);
+      if (!flags.file) throw new Error("usage: recollect related --file <path>");
+      const res = await queryEngine(cfg, { op: "related", file: String(flags.file), k: 5 });
+      if (flags.json) {
+        console.log(JSON.stringify(res.hits, null, 2));
+        return;
+      }
+      for (const h of res.hits || []) console.log(`[${h.type}] ${h.title}  (${h.id})`);
+      return;
+    }
+
+    case "remember": {
+      requireVault(cfg);
+      const text = positional.join(" ");
+      if (!text) throw new Error("usage: recollect remember <text>");
+      const title = String(flags.title || text.split(/[.!?\n]/)[0]).slice(0, 120);
+      const { id } = writeFact(cfg.vaultPath, {
+        type: String(flags.type || "fact"),
+        title,
+        body: text,
+      });
+      try {
+        const embed = await getEmbedder();
+        if (embed) saveEmbedding(cacheRoot(cfg), id, await embed(`${title}\n${text}`, "passage"));
+      } catch {
+        /* reindex later */
+      }
+      if (cfg.gitSync) syncVault(cfg.vaultPath, "recollect: manual memory");
+      console.log(`saved ${id}`);
+      return;
+    }
+
+    case "inject": {
+      if (disabled()) return;
+      try {
+        requireVault(cfg);
+        const out = await inject(cfg, String(flags.event || ""));
+        if (out) process.stdout.write(out);
+      } catch {
+        /* injection must never break a session — empty output, exit 0 */
+      }
+      return;
+    }
+
+    case "ingest": {
+      if (disabled()) return;
+      requireVault(cfg);
+      if (flags.mark) {
+        markPending({
+          session: String(flags.session || ""),
+          transcript: String(flags.transcript || ""),
+          cwd: String(flags.cwd || ""),
+        });
+        return;
+      }
+      if (flags.catchup) {
+        for (const entry of duePending()) {
+          try {
+            const res = await extractSession(cfg, entry);
+            clearPending(entry.session);
+            if (process.env.RECOLLECT_DEBUG) console.error(`catchup ${entry.session}: ${JSON.stringify(res)}`);
+          } catch (err) {
+            if (process.env.RECOLLECT_DEBUG) console.error(`catchup failed: ${err.message}`);
+          }
+        }
+        return;
+      }
+      if (!flags.transcript) throw new Error("usage: recollect ingest --transcript <path> [--session s] [--cwd d]");
+      const res = await extractSession(cfg, {
+        transcript: String(flags.transcript),
+        session: String(flags.session || ""),
+        cwd: String(flags.cwd || ""),
+      });
+      clearPending(String(flags.session || ""));
+      console.log(JSON.stringify(res));
+      return;
+    }
+
+    case "server": {
+      requireVault(cfg);
+      const sub = positional[0] || "status";
+      const cacheDir = cacheRoot(cfg);
+      if (sub === "run") {
+        const port = await runDaemon(cfg, cacheDir);
+        if (process.env.RECOLLECT_DEBUG) console.error(`daemon on 127.0.0.1:${port}`);
+        return new Promise(() => {}); // stay alive until idle-exit/SIGTERM
+      }
+      if (sub === "ensure") {
+        await ensureDaemon(cacheDir);
+        return;
+      }
+      if (sub === "stop") {
+        const res = await callDaemon(cacheDir, { op: "shutdown" });
+        console.log(res ? "stopped" : "not running");
+        return;
+      }
+      const alive = await daemonAlive(cacheDir);
+      const info = readDaemonInfo(cacheDir);
+      console.log(alive ? `running (pid ${info?.pid}, port ${info?.port})` : "not running");
+      return;
+    }
+
+    case "mcp": {
+      requireVault(cfg);
+      const { runMcp } = await import("./mcp.mjs");
+      await runMcp(cfg);
+      return new Promise(() => {});
+    }
+
+    case "reindex": {
+      requireVault(cfg);
+      const facts = listFacts(cfg.vaultPath);
+      const cacheDir = cacheRoot(cfg);
+      const existing = loadEmbeddings(cacheDir);
+      const missing = facts.filter((f) => !existing.has(f.id));
+      if (missing.length) {
+        const embed = await getEmbedder();
+        if (!embed) {
+          console.log("embeddings unavailable (optional dependency not installed) — lexical-only mode");
+          return;
+        }
+        for (const f of missing) {
+          saveEmbedding(cacheDir, f.id, await embed(`${f.title}\n${f.body}`, "passage"));
+        }
+      }
+      const pruned = pruneEmbeddings(cacheDir, new Set(facts.map((f) => f.id)));
+      if (pruned) touchMarker(cfg.vaultPath);
+      console.log(`embedded ${missing.length}, pruned ${pruned}, total facts ${facts.length}`);
+      return;
+    }
+
+    case "sync": {
+      requireVault(cfg);
+      console.log(JSON.stringify(syncVault(cfg.vaultPath)));
+      return;
+    }
+
+    case "status": {
+      requireVault(cfg);
+      const res = await queryEngine(cfg, { op: "status" });
+      const alive = await daemonAlive(cacheRoot(cfg));
+      console.log(
+        JSON.stringify(
+          { ...res, daemon: alive ? "running" : "stopped", vault: cfg.vaultPath },
+          null,
+          2
+        )
+      );
+      return;
+    }
+
+    default:
+      console.log(HELP);
+  }
+}
