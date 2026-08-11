@@ -1,6 +1,6 @@
 {
   "name": "recollect",
-  "description": "Personal session memory for Claude Code. Thin hooks delegate to the recollect engine (install: npm i -g github:juunzzi/recollect): sessions are auto-distilled into a git+markdown vault, and relevant memories are injected back on session start, prompt submit, and file access. MCP tools: search/get/related_to_file/remember.",
+  "description": "Claude Code 개인 세션 메모리 플러그인. 얇은 훅이 recollect 엔진(설치: npm i -g github:juunzzi/recollect)에 위임한다: 세션을 git+markdown vault 로 자동 증류하고, 세션 시작·프롬프트 제출·파일 접근 시점에 관련 메모리를 다시 주입한다. MCP 도구: search/get/related_to_file/remember.",
   "version": "0.1.0",
   "author": {
     "name": "juunzzi"

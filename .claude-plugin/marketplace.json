@@ -7,7 +7,7 @@
     {
       "name": "recollect",
       "source": "./",
-      "description": "Personal session memory: auto-extract durable memories from sessions into a git+markdown vault, inject them back when relevant."
+      "description": "개인 세션 메모리: 세션에서 오래 남을 기억을 자동 추출해 git+markdown vault 에 저장하고, 관련 있을 때 다시 주입한다."
     }
   ]
 }
