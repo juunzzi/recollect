@@ -1,5 +1,7 @@
 # recollect
 
+[![CI](https://github.com/juunzzi/recollect/actions/workflows/ci.yml/badge.svg)](https://github.com/juunzzi/recollect/actions/workflows/ci.yml)
+
 [Claude Code](https://claude.com/claude-code) 개인 세션 메모리.
 
 모든 세션은 Claude 에게 무언가를 가르칩니다 — 결정, 함정, 취향 같은 것들. 그리고
