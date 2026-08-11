@@ -13,14 +13,17 @@
   },
   "files": [
     "bin",
-    "src",
+    "dist",
     "prompts",
     "hooks",
     ".claude-plugin",
     ".mcp.json"
   ],
   "scripts": {
-    "test": "node test/smoke.mjs && node test/smoke-extract.mjs"
+    "test": "npm run build && node test/smoke.mjs && node test/smoke-extract.mjs",
+    "build": "tsc",
+    "prepare": "tsc",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
@@ -34,5 +37,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/juunzzi/recollect.git"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.9.3"
   }
 }

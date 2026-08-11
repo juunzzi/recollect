@@ -19,15 +19,15 @@ process.env.RECOLLECT_NO_EMBED = "1";
 process.env.HOME = tmp; // keep the derived cache inside the sandbox too
 
 const { writeFact, listFacts, getFact, applySupersedes, newId } = await import(
-  path.join(root, "src/vault.mjs")
+  path.join(root, "dist/vault.js")
 );
-const { loadConfig } = await import(path.join(root, "src/config.mjs"));
-const { createContext, dispatch } = await import(path.join(root, "src/engine.mjs"));
-const { hasSecret } = await import(path.join(root, "src/ingest/secrets.mjs"));
+const { loadConfig } = await import(path.join(root, "dist/config.js"));
+const { createContext, dispatch } = await import(path.join(root, "dist/engine.js"));
+const { hasSecret } = await import(path.join(root, "dist/ingest/secrets.js"));
 const { markPending, duePending, clearPending } = await import(
-  path.join(root, "src/ingest/pending.mjs")
+  path.join(root, "dist/ingest/pending.js")
 );
-const { tokenize } = await import(path.join(root, "src/search/lexical.mjs"));
+const { tokenize } = await import(path.join(root, "dist/search/lexical.js"));
 
 // --- vault ---
 fs.mkdirSync(vault, { recursive: true });
@@ -91,7 +91,7 @@ clearPending("s1");
 assert.equal(duePending({ quietMs: 0 }).length, 0);
 
 // --- inject formatting (inline path, no daemon) ---
-const { inject } = await import(path.join(root, "src/inject.mjs"));
+const { inject } = await import(path.join(root, "dist/inject.js"));
 const profile = await inject(cfg, "session-start");
 assert.ok(profile.includes("recollect memory profile"));
 assert.ok(profile.includes("yarn"), "profile shows standing rules");
@@ -103,8 +103,8 @@ const daemon = spawn(process.execPath, [bin, "server", "run"], {
   env: process.env,
   stdio: "ignore",
 });
-const { cacheRoot } = await import(path.join(root, "src/config.mjs"));
-const { callDaemon, daemonAlive } = await import(path.join(root, "src/daemon/client.mjs"));
+const { cacheRoot } = await import(path.join(root, "dist/config.js"));
+const { callDaemon, daemonAlive } = await import(path.join(root, "dist/daemon/client.js"));
 const cacheDir = cacheRoot(cfg);
 let alive = false;
 for (let i = 0; i < 50 && !alive; i++) {

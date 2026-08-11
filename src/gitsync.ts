@@ -2,18 +2,23 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-const git = (vaultPath, args, opts = {}) =>
+export interface SyncResult {
+  synced: boolean;
+  pushed?: boolean;
+  reason?: string;
+}
+
+const git = (vaultPath: string, args: string[], opts: { timeout?: number } = {}): string =>
   execFileSync("git", args, {
     cwd: vaultPath,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30_000,
-    ...opts,
+    timeout: opts.timeout ?? 30_000,
   }).trim();
 
-const isRepo = (vaultPath) => fs.existsSync(path.join(vaultPath, ".git"));
+const isRepo = (vaultPath: string) => fs.existsSync(path.join(vaultPath, ".git"));
 
-const hasRemote = (vaultPath) => {
+const hasRemote = (vaultPath: string): boolean => {
   try {
     return git(vaultPath, ["remote"]).length > 0;
   } catch {
@@ -26,7 +31,7 @@ const hasRemote = (vaultPath) => {
  * on any conflict we abort the rebase and leave the local commit for the next
  * attempt rather than trying to auto-resolve. Never throws.
  */
-export function syncVault(vaultPath, message = "recollect: update memories") {
+export function syncVault(vaultPath: string, message = "recollect: update memories"): SyncResult {
   if (!isRepo(vaultPath)) return { synced: false, reason: "not_a_repo" };
   const lock = path.join(vaultPath, ".git", "recollect-sync.lock");
   try {

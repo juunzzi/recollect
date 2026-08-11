@@ -1,20 +1,34 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { loadConfig, saveConfig, requireVault, cacheRoot, disabled } from "./config.mjs";
-import { listFacts, writeFact, getFact, touchMarker } from "./vault.mjs";
-import { createContext, dispatch } from "./engine.mjs";
-import { callDaemon, daemonAlive, ensureDaemon } from "./daemon/client.mjs";
-import { runDaemon, readDaemonInfo } from "./daemon/server.mjs";
-import { inject } from "./inject.mjs";
-import { markPending, clearPending, duePending } from "./ingest/pending.mjs";
-import { extractSession } from "./ingest/extract.mjs";
-import { syncVault } from "./gitsync.mjs";
-import { getEmbedder, loadEmbeddings, saveEmbedding, pruneEmbeddings } from "./search/embeddings.mjs";
+import {
+  loadConfig,
+  saveConfig,
+  requireVault,
+  cacheRoot,
+  disabled,
+  type Config,
+} from "./config.js";
+import { listFacts, writeFact, getFact, touchMarker } from "./vault.js";
+import { createContext, dispatch, type RpcRequest, type RpcResponse } from "./engine.js";
+import { callDaemon, daemonAlive, ensureDaemon } from "./daemon/client.js";
+import { runDaemon, readDaemonInfo } from "./daemon/server.js";
+import { inject } from "./inject.js";
+import { markPending, clearPending, duePending } from "./ingest/pending.js";
+import { extractSession } from "./ingest/extract.js";
+import { syncVault } from "./gitsync.js";
+import {
+  getEmbedder,
+  loadEmbeddings,
+  saveEmbedding,
+  pruneEmbeddings,
+} from "./search/embeddings.js";
 
-function parseArgs(argv) {
-  const flags = {};
-  const positional = [];
+type Flags = Record<string, string | boolean>;
+
+function parseArgs(argv: string[]): { flags: Flags; positional: string[] } {
+  const flags: Flags = {};
+  const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("--")) {
@@ -33,12 +47,14 @@ function parseArgs(argv) {
   return { flags, positional };
 }
 
-async function queryEngine(cfg, payload) {
+async function queryEngine(cfg: Config, payload: RpcRequest): Promise<RpcResponse> {
   const viaDaemon = await callDaemon(cacheRoot(cfg), payload);
   if (viaDaemon?.ok) return viaDaemon;
   const ctx = createContext(cfg);
   return dispatch(ctx, payload);
 }
+
+const hitsOf = (res: RpcResponse) => (res.ok && "hits" in res ? res.hits : []);
 
 const HELP = `recollect — personal session memory for Claude Code
 
@@ -58,7 +74,7 @@ const HELP = `recollect — personal session memory for Claude Code
 
 Env: RECOLLECT_VAULT, RECOLLECT_DISABLE=1, RECOLLECT_NO_EMBED=1, RECOLLECT_EXTRACTOR(_MODEL)`;
 
-export async function main(argv) {
+export async function main(argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   const { flags, positional } = parseArgs(rest);
   const cfg = loadConfig();
@@ -66,8 +82,8 @@ export async function main(argv) {
   switch (command) {
     case "init": {
       // zero-argument init must just work: default to ~/recollect-vault
-      const vault = flags.vault || cfg.vaultPath || "~/recollect-vault";
-      const vaultPath = path.resolve(String(vault).replace(/^~(?=$|\/)/, process.env.HOME || ""));
+      const vault = String(flags.vault || cfg.vaultPath || "~/recollect-vault");
+      const vaultPath = path.resolve(vault.replace(/^~(?=$|\/)/, process.env.HOME || ""));
       const remote = flags.remote ? String(flags.remote) : "";
       if (!fs.existsSync(vaultPath)) {
         if (remote) {
@@ -84,7 +100,10 @@ export async function main(argv) {
         // attach the remote to an existing local vault too (re-running init is safe)
         const remotes = execFileSync("git", ["remote"], { cwd: vaultPath, encoding: "utf8" });
         if (!remotes.split("\n").includes("origin")) {
-          execFileSync("git", ["remote", "add", "origin", remote], { cwd: vaultPath, stdio: "ignore" });
+          execFileSync("git", ["remote", "add", "origin", remote], {
+            cwd: vaultPath,
+            stdio: "ignore",
+          });
         }
       }
       saveConfig({ vaultPath, ...(remote ? { remote } : {}) });
@@ -92,7 +111,11 @@ export async function main(argv) {
       syncVault(vaultPath, "recollect: init vault");
       if (remote) {
         try {
-          execFileSync("git", ["push", "-u", "origin", "HEAD"], { cwd: vaultPath, stdio: "ignore", timeout: 60_000 });
+          execFileSync("git", ["push", "-u", "origin", "HEAD"], {
+            cwd: vaultPath,
+            stdio: "ignore",
+            timeout: 60_000,
+          });
         } catch {
           console.log("note: could not push to the remote yet — check access, then run `recollect sync`");
         }
@@ -114,13 +137,12 @@ export async function main(argv) {
       const q = positional.join(" ");
       if (!q) throw new Error("usage: recollect search <query>");
       const res = await queryEngine(cfg, { op: "search", query: q, k: Number(flags.k || 8) });
+      const hits = hitsOf(res);
       if (flags.json) {
-        console.log(JSON.stringify(res.hits, null, 2));
+        console.log(JSON.stringify(hits, null, 2));
         return;
       }
-      for (const h of res.hits || []) {
-        console.log(`${h.score.toFixed(3)} [${h.type}] ${h.title}  (${h.id})`);
-      }
+      for (const h of hits) console.log(`${h.score.toFixed(3)} [${h.type}] ${h.title}  (${h.id})`);
       return;
     }
 
@@ -138,11 +160,12 @@ export async function main(argv) {
       requireVault(cfg);
       if (!flags.file) throw new Error("usage: recollect related --file <path>");
       const res = await queryEngine(cfg, { op: "related", file: String(flags.file), k: 5 });
+      const hits = hitsOf(res);
       if (flags.json) {
-        console.log(JSON.stringify(res.hits, null, 2));
+        console.log(JSON.stringify(hits, null, 2));
         return;
       }
-      for (const h of res.hits || []) console.log(`[${h.type}] ${h.title}  (${h.id})`);
+      for (const h of hits) console.log(`[${h.type}] ${h.title}  (${h.id})`);
       return;
     }
 
@@ -170,7 +193,6 @@ export async function main(argv) {
     case "inject": {
       if (disabled()) return;
       try {
-        requireVault(cfg);
         const out = await inject(cfg, String(flags.event || ""));
         if (out) process.stdout.write(out);
       } catch {
@@ -195,14 +217,20 @@ export async function main(argv) {
           try {
             const res = await extractSession(cfg, entry);
             clearPending(entry.session);
-            if (process.env.RECOLLECT_DEBUG) console.error(`catchup ${entry.session}: ${JSON.stringify(res)}`);
+            if (process.env.RECOLLECT_DEBUG) {
+              console.error(`catchup ${entry.session}: ${JSON.stringify(res)}`);
+            }
           } catch (err) {
-            if (process.env.RECOLLECT_DEBUG) console.error(`catchup failed: ${err.message}`);
+            if (process.env.RECOLLECT_DEBUG) {
+              console.error(`catchup failed: ${(err as Error).message}`);
+            }
           }
         }
         return;
       }
-      if (!flags.transcript) throw new Error("usage: recollect ingest --transcript <path> [--session s] [--cwd d]");
+      if (!flags.transcript) {
+        throw new Error("usage: recollect ingest --transcript <path> [--session s] [--cwd d]");
+      }
       const res = await extractSession(cfg, {
         transcript: String(flags.transcript),
         session: String(flags.session || ""),
@@ -220,7 +248,7 @@ export async function main(argv) {
       if (sub === "run") {
         const port = await runDaemon(cfg, cacheDir);
         if (process.env.RECOLLECT_DEBUG) console.error(`daemon on 127.0.0.1:${port}`);
-        return new Promise(() => {}); // stay alive until idle-exit/SIGTERM
+        return new Promise<never>(() => {}); // stay alive until idle-exit/SIGTERM
       }
       if (sub === "ensure") {
         await ensureDaemon(cacheDir);
@@ -239,9 +267,9 @@ export async function main(argv) {
 
     case "mcp": {
       requireVault(cfg);
-      const { runMcp } = await import("./mcp.mjs");
+      const { runMcp } = await import("./mcp.js");
       await runMcp(cfg);
-      return new Promise(() => {});
+      return new Promise<never>(() => {});
     }
 
     case "reindex": {

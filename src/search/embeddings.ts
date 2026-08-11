@@ -4,14 +4,16 @@ import path from "node:path";
 const MODEL = "Xenova/multilingual-e5-small"; // 384-dim, multilingual, runs fully offline
 const DIM = 384;
 
-let embedderPromise = null;
+export type EmbedFn = (text: string, kind?: "query" | "passage") => Promise<Float32Array>;
+
+let embedderPromise: Promise<EmbedFn | null> | null = null;
 
 /**
  * Lazily load the local embedding pipeline. @huggingface/transformers is an
  * optional dependency — when missing or broken this resolves to null and the
  * caller degrades to lexical-only search. Never throws.
  */
-export function getEmbedder() {
+export function getEmbedder(): Promise<EmbedFn | null> {
   if (process.env.RECOLLECT_NO_EMBED === "1") return Promise.resolve(null);
   if (!embedderPromise) {
     embedderPromise = (async () => {
@@ -19,7 +21,7 @@ export function getEmbedder() {
         const { pipeline } = await import("@huggingface/transformers");
         const pipe = await pipeline("feature-extraction", MODEL, { dtype: "q8" });
         // e5 models require a task prefix; keep it byte-stable for cache validity.
-        return async (text, kind = "query") => {
+        return async (text: string, kind: "query" | "passage" = "query") => {
           const out = await pipe(`${kind}: ${String(text).slice(0, 2000)}`, {
             pooling: "mean",
             normalize: true,
@@ -34,18 +36,21 @@ export function getEmbedder() {
   return embedderPromise;
 }
 
-const embDir = (cacheDir) => path.join(cacheDir, "embeddings");
+const embDir = (cacheDir: string) => path.join(cacheDir, "embeddings");
 
-export function saveEmbedding(cacheDir, id, vec) {
+export function saveEmbedding(cacheDir: string, id: string, vec: Float32Array): void {
   const dir = embDir(cacheDir);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, `${id}.f32`), Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength));
+  fs.writeFileSync(
+    path.join(dir, `${id}.f32`),
+    Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength)
+  );
 }
 
-/** Load all persisted vectors into memory: Map<id, Float32Array>. */
-export function loadEmbeddings(cacheDir) {
-  const map = new Map();
-  let names = [];
+/** Load all persisted vectors into memory. */
+export function loadEmbeddings(cacheDir: string): Map<string, Float32Array> {
+  const map = new Map<string, Float32Array>();
+  let names: string[] = [];
   try {
     names = fs.readdirSync(embDir(cacheDir));
   } catch {
@@ -65,8 +70,8 @@ export function loadEmbeddings(cacheDir) {
 }
 
 /** Remove vectors whose fact no longer exists (superseded/deleted). */
-export function pruneEmbeddings(cacheDir, liveIds) {
-  let names = [];
+export function pruneEmbeddings(cacheDir: string, liveIds: Set<string>): number {
+  let names: string[] = [];
   try {
     names = fs.readdirSync(embDir(cacheDir));
   } catch {
@@ -92,7 +97,7 @@ export function pruneEmbeddings(cacheDir, liveIds) {
 }
 
 /** Dot product of two L2-normalized vectors = cosine similarity. */
-export function cosine(a, b) {
+export function cosine(a: Float32Array, b: Float32Array): number {
   let s = 0;
   for (let i = 0; i < a.length; i++) s += a[i] * b[i];
   return s;

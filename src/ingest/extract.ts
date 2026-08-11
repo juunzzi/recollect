@@ -2,30 +2,54 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { digestTranscript } from "./transcript.mjs";
-import { hasSecret } from "./secrets.mjs";
+import { digestTranscript } from "./transcript.js";
+import { hasSecret } from "./secrets.js";
 import {
   listFacts,
   writeFact,
   applySupersedes,
   normalizeForDedup,
   FACT_TYPES,
-} from "../vault.mjs";
-import { cacheRoot } from "../config.mjs";
-import { getEmbedder, saveEmbedding } from "../search/embeddings.mjs";
-import { syncVault } from "../gitsync.mjs";
+} from "../vault.js";
+import { cacheRoot, type Config } from "../config.js";
+import { getEmbedder, saveEmbedding } from "../search/embeddings.js";
+import { syncVault } from "../gitsync.js";
 
 const MAX_FACTS_PER_SESSION = 5;
 const MIN_CONFIDENCE = 0.6;
 
+export interface ExtractResult {
+  written: number;
+  skipped: boolean;
+  reason?: string;
+}
+
+interface FactCandidate {
+  type?: string;
+  title?: string;
+  body?: string;
+  entities?: unknown[];
+  files?: unknown[];
+  tags?: unknown[];
+  importance?: number;
+  confidence?: number;
+  supersedes?: string[];
+}
+
 const promptPath = () =>
-  path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "prompts", "memory-extractor.md");
+  path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "..",
+    "..",
+    "prompts",
+    "memory-extractor.md"
+  );
 
 /**
  * Run the extractor LLM via the local `claude` CLI (`claude -p`). This uses
  * the user's existing Claude subscription/login — no API key management.
  */
-function runExtractor(cfg, prompt) {
+function runExtractor(cfg: Config, prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const args = ["-p", "--output-format", "json"];
     if (cfg.extractorModel) args.push("--model", cfg.extractorModel);
@@ -48,8 +72,8 @@ function runExtractor(cfg, prompt) {
     }, 180_000);
     let out = "";
     let errOut = "";
-    child.stdout.on("data", (c) => (out += c));
-    child.stderr.on("data", (c) => (errOut += c));
+    child.stdout.on("data", (c: Buffer) => (out += c));
+    child.stderr.on("data", (c: Buffer) => (errOut += c));
     child.on("error", (err) => {
       clearTimeout(timer);
       reject(err);
@@ -67,7 +91,7 @@ function runExtractor(cfg, prompt) {
 }
 
 /** Pull the first balanced JSON object out of model output. */
-function parseJsonBlock(text) {
+function parseJsonBlock(text: string): Record<string, unknown> | null {
   const start = text.indexOf("{");
   if (start < 0) return null;
   let depth = 0;
@@ -100,18 +124,19 @@ function parseJsonBlock(text) {
   return null;
 }
 
-function projectLabel(cwd) {
-  if (!cwd) return "";
-  return path.basename(cwd);
-}
+const projectLabel = (cwd: string): string => (cwd ? path.basename(cwd) : "");
 
 /**
  * Extract memories from one session transcript and write them to the vault.
- * Returns {written, skipped, reason?}.
  */
-export async function extractSession(cfg, { transcript, session = "", cwd = "" }) {
+export async function extractSession(
+  cfg: Config,
+  { transcript, session = "", cwd = "" }: { transcript: string; session?: string; cwd?: string }
+): Promise<ExtractResult> {
   const digest = digestTranscript(transcript);
-  if (!digest || digest.length < 500) return { written: 0, skipped: true, reason: "transcript_too_small" };
+  if (!digest || digest.length < 500) {
+    return { written: 0, skipped: true, reason: "transcript_too_small" };
+  }
 
   const existing = listFacts(cfg.vaultPath);
   // corpus-aware context: the model can only emit resolvable `supersedes`
@@ -134,14 +159,14 @@ export async function extractSession(cfg, { transcript, session = "", cwd = "" }
   let resultText = rawOut;
   const envelope = parseJsonBlock(rawOut);
   if (envelope && typeof envelope.result === "string") resultText = envelope.result;
-  const parsed = typeof resultText === "string" ? parseJsonBlock(resultText) : resultText;
+  const parsed = parseJsonBlock(resultText);
   if (!parsed || !Array.isArray(parsed.facts)) return { written: 0, skipped: true, reason: "no_parse" };
 
   const seen = new Set(existing.map((f) => normalizeForDedup(f.title + " " + f.body)));
   const liveIds = new Set(existing.map((f) => f.id));
   let written = 0;
-  const writtenFacts = [];
-  for (const cand of parsed.facts.slice(0, MAX_FACTS_PER_SESSION * 2)) {
+  const writtenFacts: Array<{ id: string; text: string }> = [];
+  for (const cand of (parsed.facts as FactCandidate[]).slice(0, MAX_FACTS_PER_SESSION * 2)) {
     if (written >= MAX_FACTS_PER_SESSION) break;
     if (!cand?.body || !cand?.title) continue;
     if ((cand.confidence ?? 0) < MIN_CONFIDENCE) continue;
@@ -150,7 +175,7 @@ export async function extractSession(cfg, { transcript, session = "", cwd = "" }
     if (seen.has(key)) continue;
     seen.add(key);
     const { id } = writeFact(cfg.vaultPath, {
-      type: FACT_TYPES.includes(cand.type) ? cand.type : "fact",
+      type: (FACT_TYPES as readonly string[]).includes(cand.type || "") ? cand.type : "fact",
       title: String(cand.title).slice(0, 120),
       body: String(cand.body).slice(0, 4000),
       entities: (cand.entities || []).slice(0, 8).map(String),
@@ -183,7 +208,10 @@ export async function extractSession(cfg, { transcript, session = "", cwd = "" }
   }
 
   if (written && cfg.gitSync) {
-    syncVault(cfg.vaultPath, `recollect: ${written} memories from session ${session.slice(0, 8) || "manual"}`);
+    syncVault(
+      cfg.vaultPath,
+      `recollect: ${written} memories from session ${session.slice(0, 8) || "manual"}`
+    );
   }
   return { written, skipped: false };
 }
