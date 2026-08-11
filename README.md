@@ -1,68 +1,68 @@
 # recollect
 
-Personal session memory for [Claude Code](https://claude.com/claude-code).
+[Claude Code](https://claude.com/claude-code) 개인 세션 메모리.
 
-Every session you run teaches Claude something — a decision, a gotcha, a
-preference — and then the session ends and it's gone. recollect distills each
-session into durable markdown memories, stores them in a git-backed vault you
-own, and injects the relevant ones back into future sessions.
+모든 세션은 Claude 에게 무언가를 가르칩니다 — 결정, 함정, 취향 같은 것들. 그리고
+세션이 끝나면 전부 사라집니다. recollect 는 각 세션을 오래 남을 마크다운 메모리로
+증류해 내 소유의 git vault 에 저장하고, 다음 세션에서 관련 있는 것들을 다시
+주입합니다.
 
-- **Vault is the source of truth** — plain markdown + git. Readable in any
-  editor (Obsidian-compatible), diffable, portable. Everything else (indexes,
-  embeddings) is a derived cache you can delete at any time.
-- **Reads cost zero LLM calls** — hybrid search (BM25 + local embeddings via
-  transformers.js, fully offline) served by a small warm daemon with an inline
-  fallback.
-- **Writes cost ~1 LLM call per session** — extraction runs once at session
-  end (or compaction) through your local `claude` CLI, so it uses your
-  existing subscription. No API key to manage.
-- **Hooks never block** — every hook is a thin trigger that exits 0 no matter
-  what fails.
+- **vault 가 유일한 진실원** — 순수 마크다운 + git. 어떤 에디터로도 읽을 수 있고
+  (Obsidian 호환), diff 가능하고, 어디로든 옮길 수 있습니다. 나머지(인덱스,
+  임베딩)는 전부 파생 캐시라 언제 지워도 무손실입니다.
+- **읽기는 LLM 0콜** — 하이브리드 검색(BM25 + transformers.js 로컬 임베딩, 완전
+  오프라인)을 작은 상주 데몬이 제공하고, 데몬이 없으면 인라인으로 동일하게
+  동작합니다.
+- **쓰기는 세션당 ~1콜** — 추출은 세션 종료(또는 컴팩션) 시점에 로컬 `claude`
+  CLI 로 한 번만 실행됩니다. 기존 구독을 그대로 쓰므로 API 키 관리가 없습니다.
+- **훅은 절대 세션을 막지 않음** — 모든 훅은 얇은 트리거이고, 무엇이 실패해도
+  exit 0 입니다.
 
-## Install
+## 설치
 
-Requires Node >= 20 and the `claude` CLI.
+Node >= 20 와 `claude` CLI 가 필요합니다.
 
 ```bash
-# 1. the engine (CLI + daemon + MCP server)
+# 1. 엔진 (CLI + 데몬 + MCP 서버)
 npm install -g github:juunzzi/recollect
 
-# 2. your vault — a PRIVATE git repo is recommended so memories sync across machines
+# 2. vault — 머신 간 동기화를 위해 PRIVATE git 레포를 권장
 gh repo create <you>/recollect-vault --private
 recollect init --remote git@github.com:<you>/recollect-vault.git
-# (or just `recollect init` for a local-only vault at ~/recollect-vault)
+# (로컬 전용으로 쓰려면 그냥 `recollect init` — ~/recollect-vault 에 생성)
 
-# 3. the Claude Code plugin (hooks + MCP wiring)
+# 3. Claude Code 플러그인 (훅 + MCP 배선)
 claude plugin marketplace add juunzzi/recollect
 claude plugin install recollect@recollect
 ```
 
-That's it. New sessions will start accumulating memories.
+이게 전부입니다. 새 세션부터 메모리가 쌓이기 시작합니다.
 
-If you install the plugin before running `init`, nothing breaks: recollect
-injects a short setup notice into your next session telling you (and Claude)
-exactly what's missing, and stays inactive until the vault exists. Re-running
-`recollect init --remote ...` later attaches a remote to an existing vault.
+`init` 전에 플러그인부터 설치해도 아무것도 깨지지 않습니다: recollect 가 다음
+세션에 짧은 셋업 안내를 주입해 무엇이 빠졌는지 (당신과 Claude 에게) 알려주고,
+vault 가 생길 때까지 비활성 상태로 대기합니다. 나중에
+`recollect init --remote ...` 를 다시 실행하면 기존 vault 에 remote 를 붙일 수
+있습니다.
 
-> Keep the vault **private** — it will accumulate details about your work.
+> vault 는 반드시 **private** 으로 두세요 — 업무 맥락이 계속 쌓이는 곳입니다.
 
-## How it works
+## 동작 방식
 
 ```
-SessionStart ──► daemon warm-up + catch-up extraction + memory profile injection
-UserPromptSubmit ──► hybrid search(prompt) → top-5 relevant memories injected
-PreToolUse (Read/Edit/Write) ──► memories tied to that file injected
-Stop ──► session marked "pending" (no LLM)
-PreCompact / SessionEnd ──► extractor LLM distills the transcript → vault
+SessionStart ──► 데몬 워밍업 + 밀린 세션 추출 + 메모리 프로필 주입
+UserPromptSubmit ──► 하이브리드 검색(프롬프트) → 관련 메모리 top-5 주입
+PreToolUse (Read/Edit/Write) ──► 그 파일에 얽힌 메모리 주입
+Stop ──► 세션을 "pending" 으로 표시만 (LLM 0콜)
+PreCompact / SessionEnd ──► 추출 LLM 이 트랜스크립트를 증류 → vault
 ```
 
-The extractor only keeps facts that pass four gates: re-applicable, not
-derivable from the code itself, stable over time, and specific enough to act
-on. Candidates containing anything secret-shaped are rejected outright.
-New facts that replace old ones mark them `is_latest: false` (`supersedes`)
-instead of deleting them, so history is preserved.
+추출기는 네 가지 게이트를 전부 통과한 사실만 남깁니다: 재적용 가능한가, 코드
+자체에서 유도할 수 없는가, 시간이 지나도 안정적인가, 행동할 수 있을 만큼
+구체적인가. 시크릿 비슷한 것이 섞인 후보는 통째로 버립니다. 기존 메모리를
+대체하는 새 사실은 삭제 대신 `is_latest: false` 플래그(`supersedes`)로
+과거를 보존합니다.
 
-### Vault layout
+### vault 구조
 
 ```
 your-vault/
@@ -72,62 +72,61 @@ your-vault/
     procedural/...
 ```
 
-Each memory is one markdown file with YAML frontmatter (`id`, `type`, `title`,
-`entities`, `files`, `tags`, `confidence`, `is_latest`, ...) and a body
-structured as fact / **Why** / **How to apply**.
+메모리 하나가 마크다운 파일 하나입니다. YAML frontmatter(`id`, `type`, `title`,
+`entities`, `files`, `tags`, `confidence`, `is_latest`, ...)와 사실 /
+**Why** / **How to apply** 구조의 본문으로 이뤄집니다.
 
-### MCP tools
+### MCP 도구
 
-The plugin registers an MCP server with `search`, `get`, `related_to_file`,
-and `remember` — so Claude can also pull memories on demand or save one when
-you say "remember this".
+플러그인이 `search`, `get`, `related_to_file`, `remember` MCP 서버를
+등록합니다 — Claude 가 필요할 때 직접 메모리를 조회하거나, "이거 기억해" 라고
+말하면 즉시 저장할 수 있습니다.
 
 ## CLI
 
 ```
-recollect search <query>         hybrid search
-recollect get <id>               print one memory
-recollect related --file <path>  memories tied to a file
-recollect remember "<text>"      save a memory manually (no LLM)
-recollect status                 vault + daemon status
-recollect reindex                backfill/prune local embeddings
-recollect sync                   git commit/pull/push the vault
-recollect server stop            stop the daemon
+recollect search <query>         하이브리드 검색
+recollect get <id>               메모리 하나 출력
+recollect related --file <path>  파일에 얽힌 메모리
+recollect remember "<text>"      수동 저장 (LLM 0콜)
+recollect status                 vault + 데몬 상태
+recollect reindex                로컬 임베딩 백필/정리
+recollect sync                   vault git commit/pull/push
+recollect server stop            데몬 중지
 ```
 
-## Configuration
+## 설정
 
-`~/.recollect/config.json` (written by `init`), overridable per-process via env:
+`~/.recollect/config.json` (`init` 이 생성), env 로 프로세스별 오버라이드:
 
-| Env | Meaning |
+| Env | 의미 |
 | --- | --- |
-| `RECOLLECT_VAULT` | vault path override |
-| `RECOLLECT_DISABLE=1` | kill-switch: disables all hooks/ingest/inject |
-| `RECOLLECT_NO_EMBED=1` | lexical-only search (skip embeddings) |
-| `RECOLLECT_EXTRACTOR` | extractor command (default `claude`) |
-| `RECOLLECT_EXTRACTOR_MODEL` | model flag passed to the extractor |
-| `RECOLLECT_GIT_SYNC=0` | don't auto commit/push the vault |
+| `RECOLLECT_VAULT` | vault 경로 오버라이드 |
+| `RECOLLECT_DISABLE=1` | 킬스위치: 훅/추출/주입 전부 비활성 |
+| `RECOLLECT_NO_EMBED=1` | 임베딩 없이 lexical 검색만 |
+| `RECOLLECT_EXTRACTOR` | 추출 명령 (기본 `claude`) |
+| `RECOLLECT_EXTRACTOR_MODEL` | 추출기에 넘길 모델 플래그 |
+| `RECOLLECT_GIT_SYNC=0` | vault 자동 commit/push 끄기 |
 
-Embeddings are an optional dependency (`@huggingface/transformers`). If it
-fails to install, everything still works in BM25-only mode; `npm i -g` again
-later and run `recollect reindex`.
+임베딩은 optional dependency(`@huggingface/transformers`)입니다. 설치에
+실패해도 BM25 전용 모드로 전부 동작하며, 나중에 다시 `npm i -g` 후
+`recollect reindex` 하면 됩니다.
 
-## Sync across machines
+## 여러 머신에서 동기화
 
-Give the vault a private git remote (`recollect init --remote ...` or add one
-later). After each extraction recollect commits and pushes best-effort; on
-conflict it aborts the rebase and retries next time — single-user vaults
-rarely conflict. Clone the same setup on another machine and you have your
-memory everywhere.
+vault 에 private git remote 를 주세요 (`recollect init --remote ...` 또는
+나중에 추가). 추출이 끝날 때마다 best-effort 로 commit/push 하고, 충돌 시엔
+rebase 를 중단하고 다음 기회에 재시도합니다 — 단일 사용자 vault 는 충돌이
+거의 없습니다. 다른 머신에서 같은 셋업을 하면 내 메모리가 어디에나 있습니다.
 
-## Uninstall
+## 제거
 
 ```bash
 claude plugin uninstall recollect@recollect
 recollect server stop
 npm uninstall -g @juunzzi/recollect
-rm -rf ~/.cache/recollect ~/.recollect   # derived data + config
-# your vault is yours — keep or delete it
+rm -rf ~/.cache/recollect ~/.recollect   # 파생 데이터 + 설정
+# vault 는 당신 것입니다 — 남기든 지우든 자유
 ```
 
 ## License
