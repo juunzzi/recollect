@@ -23,8 +23,8 @@ execFileSync("git", ["init"], { cwd: vault, stdio: "ignore" });
 execFileSync("git", ["config", "user.email", "smoke@example.com"], { cwd: vault });
 execFileSync("git", ["config", "user.name", "smoke"], { cwd: vault });
 
-const { writeFact, listFacts, getFact } = await import(path.join(root, "src/vault.mjs"));
-const { loadConfig } = await import(path.join(root, "src/config.mjs"));
+const { writeFact, listFacts, getFact } = await import(path.join(root, "dist/vault.js"));
+const { loadConfig } = await import(path.join(root, "dist/config.js"));
 
 // pre-existing fact that the extractor will supersede
 const old = writeFact(vault, { type: "feedback", title: "use npm", body: "use npm for installs" });
@@ -87,7 +87,7 @@ for (let i = 0; i < 20; i++) {
 }
 fs.writeFileSync(transcript, turns.join("\n"));
 
-const { extractSession } = await import(path.join(root, "src/ingest/extract.mjs"));
+const { extractSession } = await import(path.join(root, "dist/ingest/extract.js"));
 const cfg = loadConfig();
 const res = await extractSession(cfg, { transcript, session: "sess-1", cwd: tmp });
 

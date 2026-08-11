@@ -2,7 +2,7 @@
  * Secret detection. Policy is REJECT, not mask: if a candidate memory contains
  * anything that looks like a credential, the whole candidate is dropped.
  */
-const PATTERNS = [
+const PATTERNS: RegExp[] = [
   /\b(?:api[_-]?key|apikey|secret|token|password|passwd)\s*[:=]\s*['"]?[\w\-./+]{16,}/i,
   /\bBearer\s+[\w\-.=]{20,}/,
   /\bghp_[A-Za-z0-9]{30,}/,
@@ -15,7 +15,7 @@ const PATTERNS = [
   /\b[\w.+-]+@[\w-]+\.[\w.]+\s*[:/]\s*\S{6,}\s*(?:password|pw|pass)/i,
 ];
 
-export function hasSecret(text) {
+export function hasSecret(text: string): boolean {
   const s = String(text || "");
   return PATTERNS.some((re) => re.test(s));
 }

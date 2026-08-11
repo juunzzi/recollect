@@ -9,19 +9,32 @@ import fs from "node:fs";
 const MAX_DIGEST_CHARS = 120_000;
 const MAX_TOOL_RESULT_CHARS = 300;
 
-export function digestTranscript(transcriptPath) {
-  let raw;
+interface ContentBlock {
+  type?: string;
+  text?: string;
+  name?: string;
+  input?: unknown;
+  content?: string | Array<{ text?: string }>;
+}
+
+interface TranscriptEntry {
+  type?: string;
+  message?: { role?: string; content?: string | ContentBlock[] };
+}
+
+export function digestTranscript(transcriptPath: string): string | null {
+  let raw: string;
   try {
     raw = fs.readFileSync(transcriptPath, "utf8");
   } catch {
     return null;
   }
-  const lines = [];
+  const lines: string[] = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    let entry;
+    let entry: TranscriptEntry;
     try {
-      entry = JSON.parse(line);
+      entry = JSON.parse(line) as TranscriptEntry;
     } catch {
       continue;
     }

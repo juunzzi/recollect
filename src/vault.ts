@@ -3,13 +3,64 @@ import path from "node:path";
 import crypto from "node:crypto";
 import matter from "gray-matter";
 
-export const FACT_TYPES = ["fact", "feedback", "project", "procedural", "reference", "insight"];
+export const FACT_TYPES = [
+  "fact",
+  "feedback",
+  "project",
+  "procedural",
+  "reference",
+  "insight",
+] as const;
+export type FactType = (typeof FACT_TYPES)[number];
 
-const factsDir = (vaultPath) => path.join(vaultPath, "facts");
-const markerPath = (vaultPath) => path.join(vaultPath, ".recollect-lastwrite");
+export interface FactMeta {
+  id: string;
+  type: string;
+  title: string;
+  created: string;
+  is_latest?: boolean;
+  superseded_by?: string;
+  entities?: string[];
+  files?: string[];
+  tags?: string[];
+  importance?: number;
+  confidence?: number;
+  project?: string;
+  source_session?: string;
+  supersedes?: string[];
+  [key: string]: unknown;
+}
+
+export interface Fact {
+  id: string;
+  type: string;
+  title: string;
+  body: string;
+  meta: FactMeta;
+  file: string;
+}
+
+export interface FactInput {
+  id?: string;
+  type?: string;
+  title?: string;
+  body?: string;
+  created?: string;
+  entities?: string[];
+  files?: string[];
+  tags?: string[];
+  importance?: number;
+  confidence?: number;
+  project?: string;
+  source_session?: string;
+  supersedes?: string[];
+}
+
+const factsDir = (vaultPath: string) => path.join(vaultPath, "facts");
+const markerPath = (vaultPath: string) => path.join(vaultPath, ".recollect-lastwrite");
 
 /** Touched on every write so the daemon can detect staleness without scanning. */
-export function touchMarker(vaultPath) {
+export function touchMarker(vaultPath: string): void {
   try {
     fs.writeFileSync(markerPath(vaultPath), String(Date.now()));
   } catch {
@@ -17,7 +68,7 @@ export function touchMarker(vaultPath) {
   }
 }
 
-export function markerMtime(vaultPath) {
+export function markerMtime(vaultPath: string): number {
   try {
     return fs.statSync(markerPath(vaultPath)).mtimeMs;
   } catch {
@@ -25,7 +76,7 @@ export function markerMtime(vaultPath) {
   }
 }
 
-export function slugify(title) {
+export function slugify(title: string): string {
   const s = String(title || "")
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, "-")
@@ -34,19 +85,22 @@ export function slugify(title) {
   return s || "memory";
 }
 
-export function newId(title, now = new Date()) {
-  const pad = (n) => String(n).padStart(2, "0");
+export function newId(title: string, now = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
   const date = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const time = `${pad(now.getHours())}${pad(now.getMinutes())}`;
   const rand = crypto.randomBytes(3).toString("hex");
   return `${date}-${time}-${rand}-${slugify(title)}`;
 }
 
-/** List every active fact in the vault: [{id, type, title, body, meta, file}] */
-export function listFacts(vaultPath, { includeSuperseded = false } = {}) {
+/** List every active fact in the vault. */
+export function listFacts(
+  vaultPath: string,
+  { includeSuperseded = false }: { includeSuperseded?: boolean } = {}
+): Fact[] {
   const root = factsDir(vaultPath);
-  const out = [];
-  let typeDirs = [];
+  const out: Fact[] = [];
+  let typeDirs: fs.Dirent[] = [];
   try {
     typeDirs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
   } catch {
@@ -59,7 +113,7 @@ export function listFacts(vaultPath, { includeSuperseded = false } = {}) {
       const file = path.join(dirPath, name);
       try {
         const parsed = matter(fs.readFileSync(file, "utf8"));
-        const meta = parsed.data || {};
+        const meta = (parsed.data || {}) as FactMeta;
         if (!includeSuperseded && meta.is_latest === false) continue;
         out.push({
           id: meta.id || name.replace(/\.md$/, ""),
@@ -77,16 +131,18 @@ export function listFacts(vaultPath, { includeSuperseded = false } = {}) {
   return out;
 }
 
-export function getFact(vaultPath, id) {
+export function getFact(vaultPath: string, id: string): Fact | null {
   return listFacts(vaultPath, { includeSuperseded: true }).find((f) => f.id === id) || null;
 }
 
-export function writeFact(vaultPath, fact) {
-  const type = FACT_TYPES.includes(fact.type) ? fact.type : "fact";
-  const id = fact.id || newId(fact.title);
+export function writeFact(vaultPath: string, fact: FactInput): { id: string; file: string } {
+  const type: FactType = (FACT_TYPES as readonly string[]).includes(fact.type || "")
+    ? (fact.type as FactType)
+    : "fact";
+  const id = fact.id || newId(fact.title || "");
   const dir = path.join(factsDir(vaultPath), type);
   fs.mkdirSync(dir, { recursive: true });
-  const meta = {
+  const meta: FactMeta = {
     id,
     type,
     title: fact.title || "",
@@ -111,7 +167,11 @@ export function writeFact(vaultPath, fact) {
  * Mark old facts as superseded by flipping frontmatter only — the file never
  * moves, so links and git history stay intact.
  */
-export function applySupersedes(vaultPath, newFactId, supersededIds) {
+export function applySupersedes(
+  vaultPath: string,
+  newFactId: string,
+  supersededIds: string[]
+): number {
   let applied = 0;
   for (const oldId of supersededIds || []) {
     const old = getFact(vaultPath, oldId);
@@ -131,7 +191,7 @@ export function applySupersedes(vaultPath, newFactId, supersededIds) {
 }
 
 /** Normalized body used for mechanical exact-duplicate detection. */
-export function normalizeForDedup(text) {
+export function normalizeForDedup(text: string): string {
   return String(text || "")
     .toLowerCase()
     .replace(/\s+/g, " ")

@@ -1,11 +1,12 @@
 import MiniSearch from "minisearch";
+import type { Fact } from "../vault.js";
 
 /**
  * Tokenizer that handles both Latin words and CJK runs (Korean/Japanese/Chinese).
  * CJK runs are indexed as character bigrams so partial-word queries still match.
  */
-export function tokenize(text) {
-  const out = [];
+export function tokenize(text: string): string[] {
+  const out: string[] = [];
   const norm = String(text || "").toLowerCase();
   for (const m of norm.matchAll(/[a-z0-9][a-z0-9_$.@/#-]*|[ᄀ-ᇿ㄰-㆏가-힣぀-ヿ一-鿿]+/g)) {
     const t = m[0];
@@ -19,7 +20,7 @@ export function tokenize(text) {
   return out;
 }
 
-export function buildIndex(facts) {
+export function buildIndex(facts: Fact[]): MiniSearch {
   const index = new MiniSearch({
     fields: ["title", "body", "entities", "tags", "files"],
     storeFields: [],
