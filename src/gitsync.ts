@@ -14,6 +14,8 @@ const git = (vaultPath: string, args: string[], opts: { timeout?: number } = {})
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout ?? 30_000,
+    // never let a credential prompt hang a hook or the daemon's sync
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
   }).trim();
 
 const isRepo = (vaultPath: string) => fs.existsSync(path.join(vaultPath, ".git"));

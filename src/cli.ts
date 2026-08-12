@@ -56,9 +56,39 @@ async function queryEngine(cfg: Config, payload: RpcRequest): Promise<RpcRespons
 
 const hitsOf = (res: RpcResponse) => (res.ok && "hits" in res ? res.hits : []);
 
+/**
+ * Create a private <login>/recollect-vault repo via the gh CLI and return its
+ * https clone URL (gh's credential helper makes https pushes just work).
+ * Returns "" when gh is unavailable, not authenticated, or creation fails —
+ * except "already exists", which we treat as success and reuse.
+ */
+function createVaultRepo(): string {
+  const gh = (args: string[]) =>
+    execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
+  let login: string;
+  try {
+    login = gh(["api", "user", "-q", ".login"]);
+  } catch {
+    return "";
+  }
+  if (!login) return "";
+  const url = `https://github.com/${login}/recollect-vault.git`;
+  try {
+    gh(["repo", "create", `${login}/recollect-vault`, "--private"]);
+    console.log(`created private repo ${login}/recollect-vault`);
+  } catch (err) {
+    const msg = String((err as { stderr?: string })?.stderr || err);
+    if (!/already exists/i.test(msg)) return "";
+    console.log(`reusing existing repo ${login}/recollect-vault`);
+  }
+  return url;
+}
+
 const HELP = `recollect — personal session memory for Claude Code
 
-  init --vault <path> [--remote <git-url>]   set up the vault (clones remote if given)
+  init [--vault <path>] [--remote <git-url>] [--create-remote]
+        set up the vault (default ~/recollect-vault, local-only). --remote clones/attaches
+        an existing repo; --create-remote makes a private <you>/recollect-vault via gh
   search <query> [--k N] [--json]            hybrid search over memories
   get <id>                                   print one memory
   related --file <path> [--json]             memories tied to a file
@@ -84,10 +114,29 @@ export async function main(argv: string[]): Promise<void> {
       // zero-argument init must just work: default to ~/recollect-vault
       const vault = String(flags.vault || cfg.vaultPath || "~/recollect-vault");
       const vaultPath = path.resolve(vault.replace(/^~(?=$|\/)/, process.env.HOME || ""));
-      const remote = flags.remote ? String(flags.remote) : "";
+      let remote = flags.remote ? String(flags.remote) : "";
+      // a repo we just created is empty — attach it to a fresh local vault
+      // instead of cloning it (cloning is for pre-existing vault repos)
+      let remoteJustCreated = false;
+      if (!remote && flags["create-remote"]) {
+        remoteJustCreated = true;
+        // one-command private vault repo via gh — the biggest onboarding hurdle
+        // is "go create a private repo yourself", so do it for the user
+        remote = createVaultRepo();
+        if (!remote) {
+          console.log(
+            "note: could not create a remote via gh (not installed or not logged in) — " +
+              "continuing with a local-only vault. Add a remote later with " +
+              "`recollect init --remote <git-url>` or retry `--create-remote` after `gh auth login`."
+          );
+        }
+      }
       if (!fs.existsSync(vaultPath)) {
-        if (remote) {
-          execFileSync("git", ["clone", remote, vaultPath], { stdio: "inherit" });
+        if (remote && !remoteJustCreated) {
+          execFileSync("git", ["clone", remote, vaultPath], {
+            stdio: "inherit",
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          });
         } else {
           fs.mkdirSync(vaultPath, { recursive: true });
         }
@@ -115,6 +164,7 @@ export async function main(argv: string[]): Promise<void> {
             cwd: vaultPath,
             stdio: "ignore",
             timeout: 60_000,
+            env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
           });
         } catch {
           console.log("note: could not push to the remote yet — check access, then run `recollect sync`");
@@ -122,9 +172,8 @@ export async function main(argv: string[]): Promise<void> {
       }
       console.log(`vault ready at ${vaultPath}${remote ? ` (remote: ${remote})` : " (local only)"}`);
       if (!remote) {
-        console.log(`\ntip: back your memories with a PRIVATE repo so they sync across machines:`);
-        console.log(`  gh repo create <you>/recollect-vault --private`);
-        console.log(`  recollect init --remote git@github.com:<you>/recollect-vault.git`);
+        console.log(`\ntip: a PRIVATE remote makes your memories survive this machine and sync to others:`);
+        console.log(`  recollect init --create-remote   # gh 로 private 레포 생성까지 자동`);
       }
       console.log(`\nif the Claude Code plugin is not installed yet:`);
       console.log(`  claude plugin marketplace add juunzzi/recollect`);

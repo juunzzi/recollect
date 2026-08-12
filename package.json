@@ -20,7 +20,7 @@
     ".mcp.json"
   ],
   "scripts": {
-    "test": "npm run build && node test/smoke.mjs && node test/smoke-extract.mjs",
+    "test": "npm run build && node test/smoke.mjs && node test/smoke-extract.mjs && node test/smoke-init.mjs",
     "build": "tsc",
     "prepare": "tsc",
     "typecheck": "tsc --noEmit"

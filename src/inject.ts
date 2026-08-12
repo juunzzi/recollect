@@ -111,11 +111,11 @@ function setupBanner(cfg: Config): string {
     return (
       "## recollect: memory vault not set up\n" +
       "> The recollect plugin is installed but has no vault, so no memories are being " +
-      "saved or recalled. One-time setup (tell the user; do not run it unprompted):\n" +
+      "saved or recalled. One-time setup — a single command (tell the user; do not run it unprompted):\n" +
       ">\n" +
-      "> 1. (recommended) create a **private** repo for the vault, e.g. `gh repo create <you>/recollect-vault --private`\n" +
-      "> 2. `recollect init --remote git@github.com:<you>/recollect-vault.git` " +
-      "(or just `recollect init` for a local-only vault at `~/recollect-vault`)\n"
+      "> - `recollect init` — local vault at `~/recollect-vault`, works immediately\n" +
+      "> - `recollect init --create-remote` — same, plus auto-creates a **private** " +
+      "`<you>/recollect-vault` repo via gh so memories sync across machines\n"
     );
   }
   if (!fs.existsSync(cfg.vaultPath)) {
