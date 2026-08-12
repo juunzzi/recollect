@@ -28,17 +28,25 @@ Node >= 20 와 `claude` CLI 가 필요합니다.
 # 1. 엔진 (CLI + 데몬 + MCP 서버)
 npm install -g github:juunzzi/recollect
 
-# 2. vault — 머신 간 동기화를 위해 PRIVATE git 레포를 권장
-gh repo create <you>/recollect-vault --private
-recollect init --remote git@github.com:<you>/recollect-vault.git
-# (로컬 전용으로 쓰려면 그냥 `recollect init` — ~/recollect-vault 에 생성)
+# 2. vault — 이 한 줄이면 끝 (~/recollect-vault 에 로컬 vault 생성)
+recollect init
 
 # 3. Claude Code 플러그인 (훅 + MCP 배선)
 claude plugin marketplace add juunzzi/recollect
 claude plugin install recollect@recollect
 ```
 
-이게 전부입니다. 새 세션부터 메모리가 쌓이기 시작합니다.
+이게 전부입니다. 새 세션부터 메모리가 쌓이기 시작합니다. vault 는 그냥 로컬
+폴더라서 별도 레포를 만들 필요가 없습니다.
+
+머신 간 동기화를 원하면 (언제든, 나중에라도) 한 줄만 더:
+
+```bash
+recollect init --create-remote   # gh 로 private <you>/recollect-vault 레포 생성 + 연결 + 첫 push 까지 자동
+```
+
+gh CLI 가 없거나 로그인돼 있지 않으면 로컬 전용으로 안전하게 계속 동작하고,
+이미 레포가 있다면 `recollect init --remote <git-url>` 로 연결만 하면 됩니다.
 
 `init` 전에 플러그인부터 설치해도 아무것도 깨지지 않습니다: recollect 가 다음
 세션에 짧은 셋업 안내를 주입해 무엇이 빠졌는지 (당신과 Claude 에게) 알려주고,
@@ -116,10 +124,11 @@ recollect server stop            데몬 중지
 
 ## 여러 머신에서 동기화
 
-vault 에 private git remote 를 주세요 (`recollect init --remote ...` 또는
-나중에 추가). 추출이 끝날 때마다 best-effort 로 commit/push 하고, 충돌 시엔
-rebase 를 중단하고 다음 기회에 재시도합니다 — 단일 사용자 vault 는 충돌이
-거의 없습니다. 다른 머신에서 같은 셋업을 하면 내 메모리가 어디에나 있습니다.
+`recollect init --create-remote` 한 줄로 private remote 가 생깁니다(이미 레포가
+있으면 `--remote <git-url>` 로 연결). 이후 추출이 끝날 때마다 best-effort 로
+commit/push 하고, 충돌 시엔 rebase 를 중단하고 다음 기회에 재시도합니다 —
+단일 사용자 vault 는 충돌이 거의 없습니다. 다른 머신에서 같은 셋업을 하면
+내 메모리가 어디에나 있습니다.
 
 ## 제거
 
