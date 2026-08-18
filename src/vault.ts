@@ -57,23 +57,52 @@ export interface FactInput {
 }
 
 const factsDir = (vaultPath: string) => path.join(vaultPath, "facts");
-const markerPath = (vaultPath: string) => path.join(vaultPath, ".recollect-lastwrite");
+// lives inside .git/ so it is never committed — a marker file in the vault
+// itself would show up as churn in every sync commit
+const markerPath = (vaultPath: string) => path.join(vaultPath, ".git", "recollect-lastwrite");
+const legacyMarkerPath = (vaultPath: string) => path.join(vaultPath, ".recollect-lastwrite");
 
 /** Touched on every write so the daemon can detect staleness without scanning. */
 export function touchMarker(vaultPath: string): void {
   try {
     fs.writeFileSync(markerPath(vaultPath), String(Date.now()));
   } catch {
-    /* best-effort */
+    /* best-effort — markerMtime falls back to directory mtimes */
+  }
+  try {
+    fs.unlinkSync(legacyMarkerPath(vaultPath)); // clean up pre-0.2 marker
+  } catch {
+    /* already gone */
   }
 }
 
+/**
+ * Freshness signal = max(marker, facts dirs). The marker covers in-place
+ * edits (supersede flips) which don't change directory mtimes; the directory
+ * mtimes cover changes that arrive without a marker touch (git pull from
+ * another machine).
+ */
 export function markerMtime(vaultPath: string): number {
+  let max = 0;
+  const consider = (p: string) => {
+    try {
+      const m = fs.statSync(p).mtimeMs;
+      if (m > max) max = m;
+    } catch {
+      /* missing path contributes nothing */
+    }
+  };
+  consider(markerPath(vaultPath));
+  const facts = factsDir(vaultPath);
+  consider(facts);
   try {
-    return fs.statSync(markerPath(vaultPath)).mtimeMs;
+    for (const d of fs.readdirSync(facts, { withFileTypes: true })) {
+      if (d.isDirectory()) consider(path.join(facts, d.name));
+    }
   } catch {
-    return 0;
+    /* no facts dir yet */
   }
+  return max;
 }
 
 export function slugify(title: string): string {
