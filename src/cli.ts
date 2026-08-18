@@ -338,7 +338,9 @@ export async function main(argv: string[]): Promise<void> {
         }
       }
       const pruned = pruneEmbeddings(cacheDir, new Set(facts.map((f) => f.id)));
-      if (pruned) touchMarker(cfg.vaultPath);
+      // marker touch on backfill too — otherwise the running daemon never
+      // reloads and keeps serving without the new vectors
+      if (missing.length || pruned) touchMarker(cfg.vaultPath);
       console.log(`embedded ${missing.length}, pruned ${pruned}, total facts ${facts.length}`);
       return;
     }

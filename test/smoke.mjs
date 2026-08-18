@@ -32,6 +32,8 @@ const { tokenize } = await import(path.join(root, "dist/search/lexical.js"));
 // --- vault ---
 fs.mkdirSync(vault, { recursive: true });
 execFileSync("git", ["init"], { cwd: vault, stdio: "ignore" });
+execFileSync("git", ["config", "user.email", "smoke@example.com"], { cwd: vault });
+execFileSync("git", ["config", "user.name", "smoke"], { cwd: vault });
 const cfg = loadConfig();
 assert.equal(cfg.vaultPath, vault);
 
@@ -118,6 +120,38 @@ await callDaemon(cacheDir, { op: "shutdown" });
 await new Promise((r) => setTimeout(r, 300));
 assert.ok(!(await daemonAlive(cacheDir)), "daemon shuts down");
 daemon.kill("SIGKILL");
+
+// --- marker lives in .git/, never in the committed tree ---
+assert.ok(!fs.existsSync(path.join(vault, ".recollect-lastwrite")), "no committed marker file");
+assert.ok(fs.existsSync(path.join(vault, ".git", "recollect-lastwrite")), "marker in .git/");
+
+// --- sync reliability: stale lock GC + state + stuck banner ---
+const { syncVault, readSyncState } = await import(path.join(root, "dist/gitsync.js"));
+const lock = path.join(vault, ".git", "recollect-sync.lock");
+fs.writeFileSync(lock, "");
+const syncLocked = syncVault(vault, "smoke: locked");
+assert.equal(syncLocked.reason, "locked", "fresh lock blocks the sync");
+const stale = (Date.now() - 11 * 60 * 1000) / 1000;
+fs.utimesSync(lock, stale, stale);
+const syncAfterGc = syncVault(vault, "smoke: sync");
+assert.ok(syncAfterGc.synced, `stale lock is GC'd and sync proceeds (${JSON.stringify(syncAfterGc)})`);
+assert.ok(!fs.existsSync(lock), "lock released after sync");
+assert.equal(readSyncState(vault).failStreak, 0, "success resets the fail streak");
+
+const syncStateFile = path.join(vault, ".git", "recollect-sync-state.json");
+fs.writeFileSync(syncStateFile, JSON.stringify({ failStreak: 3, lastSyncedAt: 0, lastReason: "push_failed" }));
+const stuckProfile = await inject(cfg, "session-start");
+assert.ok(stuckProfile.includes("vault sync has failed"), "session-start warns when sync is stuck");
+assert.ok(stuckProfile.includes("recollect memory profile"), "profile still injected under the warning");
+const throttled = await inject(cfg, "prompt-submit");
+assert.equal(throttled, "", "mid-session warning is throttled right after a warning");
+fs.writeFileSync(
+  syncStateFile,
+  JSON.stringify({ failStreak: 4, lastSyncedAt: 0, warnedAt: Date.now() - 7 * 60 * 60 * 1000 })
+);
+const rewarn = await inject(cfg, "prompt-submit");
+assert.ok(rewarn.includes("vault sync has failed"), "mid-session warning re-fires after the throttle window");
+fs.writeFileSync(syncStateFile, JSON.stringify({ failStreak: 0, lastSyncedAt: 0 }));
 
 // --- setup banner when no vault is configured ---
 process.env.RECOLLECT_VAULT = "";

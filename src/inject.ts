@@ -5,6 +5,7 @@ import { createContext, dispatch, type RpcRequest, type RpcResponse, type Search
 import { callDaemon } from "./daemon/client.js";
 import { cutLowRelevance } from "./search/hybrid.js";
 import { listFacts } from "./vault.js";
+import { readSyncState, markSyncWarned } from "./gitsync.js";
 
 interface HookInput {
   session_id?: string;
@@ -128,6 +129,27 @@ function setupBanner(cfg: Config): string {
   return "";
 }
 
+const SYNC_WARN_STREAK = 3;
+const SYNC_REWARN_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * Silent sync failure is the worst failure mode: memories keep accumulating
+ * locally while the user believes they are backed up. Warn at session start,
+ * and (throttled) mid-session — long-running sessions never see a session
+ * start.
+ */
+function syncStuckBanner(cfg: Config, event: string): string {
+  const state = readSyncState(cfg.vaultPath);
+  if (state.failStreak < SYNC_WARN_STREAK) return "";
+  if (event === "prompt-submit" && Date.now() - (state.warnedAt || 0) < SYNC_REWARN_MS) return "";
+  markSyncWarned(cfg.vaultPath);
+  return (
+    `> ⚠️ recollect: vault sync has failed ${state.failStreak} times in a row` +
+    `${state.lastReason ? ` (${state.lastReason})` : ""}. New memories are NOT reaching the ` +
+    "remote — tell the user to run `recollect sync` and resolve any conflict.\n"
+  );
+}
+
 export async function inject(cfg: Config, event: string): Promise<string> {
   const hook = await readHookInput();
   const session = String(hook.session_id || "");
@@ -136,19 +158,20 @@ export async function inject(cfg: Config, event: string): Promise<string> {
     const banner = setupBanner(cfg);
     if (banner) return banner;
     // profile is built from vault recency directly — no LLM, no daemon needed
-    return sessionProfile(cfg);
+    return syncStuckBanner(cfg, event) + sessionProfile(cfg);
   }
 
   if (!cfg.vaultPath || !fs.existsSync(cfg.vaultPath)) return "";
 
   if (event === "prompt-submit") {
+    const banner = syncStuckBanner(cfg, event);
     const prompt = String(hook.prompt || "").trim();
-    if (prompt.length < 8) return "";
+    if (prompt.length < 8) return banner;
     const res = await query(cfg, { op: "search", query: prompt, k: cfg.injectLimit });
     let hits = cutLowRelevance(hitsOf(res));
     hits = filterSeen(cfg, session, hits).slice(0, cfg.injectLimit);
-    if (!hits.length) return "";
-    return `## recollect memory\n${GUARD}\n\n${renderHits(hits)}\n`;
+    if (!hits.length) return banner;
+    return `${banner}## recollect memory\n${GUARD}\n\n${renderHits(hits)}\n`;
   }
 
   if (event === "pre-tool-use") {
